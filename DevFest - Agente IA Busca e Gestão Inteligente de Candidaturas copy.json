@@ -1,0 +1,4129 @@
+{
+  "name": "DevFest - Agente IA Busca e Gestão Inteligente de Candidaturas copy",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "hours",
+              "hoursInterval": 6
+            }
+          ]
+        }
+      },
+      "id": "9ba54242-aeaa-4d0d-9a18-6247dc5fc04a",
+      "name": "Schedule Scout - 6h",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -1920,
+        224
+      ]
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "id": "85456531-7b48-4f1f-9286-9eb884f117ae",
+      "name": "Scout - RSS Remote Programming",
+      "type": "n8n-nodes-base.rssFeedRead",
+      "typeVersion": 1.1,
+      "position": [
+        -1264,
+        400
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000
+    },
+    {
+      "parameters": {
+        "jsCode": "return $input.all().map(i => {\n  const r = i.json;\n  const title = r.title || '';\n  const p = title.split(':');\n  return {json:{\n    empresa: p.length > 1 ? p[0].trim() : (r.creator || 'Não informado'),\n    cargo: p.length > 1 ? p.slice(1).join(':').trim() : title,\n    descricao: r.contentSnippet || r.content || r.description || '',\n    link: r.link || '',\n    localizacao: 'Remoto',\n    tipo: 'Remoto',\n    fonte: 'RSS - We Work Remotely'\n  }};\n}).filter(i => i.json.cargo && i.json.link);"
+      },
+      "id": "4097e4bd-d8c2-44aa-94f3-f5462cedb597",
+      "name": "Normalize RSS Jobs",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1024,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "numberInputs": 3
+      },
+      "id": "104edae2-fd9c-4cf4-b297-97f78e2cc767",
+      "name": "Merge Scout Sources",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        -768,
+        224
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "function hashString(str) {\n  let hash1 = 0xdeadbeef;\n  let hash2 = 0x41c6ce57;\n\n  for (let i = 0; i < str.length; i++) {\n    const ch = str.charCodeAt(i);\n\n    hash1 = Math.imul(hash1 ^ ch, 2654435761);\n    hash2 = Math.imul(hash2 ^ ch, 1597334677);\n  }\n\n  hash1 =\n    Math.imul(hash1 ^ (hash1 >>> 16), 2246822507) ^\n    Math.imul(hash2 ^ (hash2 >>> 13), 3266489909);\n\n  hash2 =\n    Math.imul(hash2 ^ (hash2 >>> 16), 2246822507) ^\n    Math.imul(hash1 ^ (hash1 >>> 13), 3266489909);\n\n  return (\n    (hash2 >>> 0).toString(16).padStart(8, '0') +\n    (hash1 >>> 0).toString(16).padStart(8, '0')\n  );\n}\n\nconst seen = new Set();\nconst output = [];\n\nfor (const item of $input.all()) {\n  const j = item.json;\n\n  const canonicalUrl = String(j.link || '')\n    .trim()\n    .toLowerCase()\n    .replace(/[?#].*$/, '')\n    .replace(/\\/$/, '');\n\n  const fallbackKey = [\n    j.company || '',\n    j.title || '',\n    j.location || ''\n  ]\n    .join('|')\n    .toLowerCase()\n    .trim();\n\n  const baseKey = canonicalUrl || fallbackKey;\n\n  if (!baseKey) {\n    continue;\n  }\n\n  const id = hashString(baseKey);\n\n  // Remove duplicatas dentro do lote atual\n  if (seen.has(id)) {\n    continue;\n  }\n\n  seen.add(id);\n\n  output.push({\n    json: {\n      ...j,\n      id,\n      data_encontrada: new Date().toISOString()\n    }\n  });\n}\n\nreturn output;"
+      },
+      "id": "d5998cca-a6c9-4a87-92e6-6f74817e6656",
+      "name": "Build Deterministic Job ID",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -320,
+        224
+      ]
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "id": "6e5c2865-64a9-42be-b38e-2f6c94198ac4",
+      "name": "Loop Over Jobs",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        480,
+        224
+      ]
+    },
+    {
+      "parameters": {
+        "amount": 2
+      },
+      "id": "46fcb060-ce0a-4b59-8376-31ad8dda9a1a",
+      "name": "Rate Limit - 2s",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        704,
+        320
+      ],
+      "webhookId": "96cb8b7a-9170-44dc-9eb7-2b4b866234d0"
+    },
+    {
+      "parameters": {
+        "jsCode": "const job = $('Rate Limit - 2s').item.json;\n\nlet raw =\n  $json.text ??\n  $json.output ??\n  $json.response ??\n  $json;\n\nlet result;\n\n// Se o modelo já retornar objeto\nif (typeof raw === 'object' && raw !== null) {\n  result = raw;\n} else {\n  let text = String(raw || '').trim();\n\n  text = text\n    .replace(/^```json\\s*/i, '')\n    .replace(/^```\\s*/i, '')\n    .replace(/```\\s*$/i, '')\n    .trim();\n\n  const start = text.indexOf('{');\n  const end = text.lastIndexOf('}');\n\n  if (start === -1 || end === -1 || end < start) {\n    throw new Error(\n      'Resposta do Recruiter não contém JSON completo: ' +\n      text.slice(0, 1500)\n    );\n  }\n\n  const jsonText = text.slice(start, end + 1);\n\n  try {\n    result = JSON.parse(jsonText);\n  } catch (error) {\n    throw new Error(\n      'JSON inválido retornado pelo Recruiter: ' +\n      error.message +\n      ' | Conteúdo: ' +\n      jsonText.slice(0, 1500)\n    );\n  }\n}\n\n// Score\nlet score = Number(result.score ?? 0);\n\nif (!Number.isFinite(score)) {\n  score = 0;\n}\n\nscore = Math.max(\n  0,\n  Math.min(100, Math.round(score))\n);\n\n// Motivos\nconst motivos = Array.isArray(result.motivos)\n  ? result.motivos\n      .map(String)\n      .map(x => x.trim())\n      .filter(Boolean)\n      .slice(0, 4)\n  : [];\n\n// Lacunas\nconst lacunas = Array.isArray(result.lacunas)\n  ? result.lacunas\n      .map(String)\n      .map(x => x.trim())\n      .filter(Boolean)\n      .slice(0, 4)\n  : [];\n\nreturn [\n  {\n    json: {\n      ...job,\n\n      score,\n      motivos,\n      lacunas,\n\n      // A regra fica determinística no n8n,\n      // independentemente do boolean retornado pelo LLM.\n      recomendado: score >= 70\n    }\n  }\n];"
+      },
+      "id": "0cc3f1aa-3666-445e-8cc0-9bd729f3210b",
+      "name": "Combine Recruiter Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1280,
+        320
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "e8ac8a4a-6e28-40ae-bc16-99bf9bfbba46",
+              "leftValue": "={{ $json.score }}",
+              "rightValue": 70,
+              "operator": {
+                "type": "number",
+                "operation": "gte"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "33232166-8e71-4658-a569-f565e9bb70af",
+      "name": "IF Score >= 70",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1472,
+        320
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "492e7474-7d8f-4e5f-a872-087bbf64c715",
+              "name": "ID",
+              "value": "={{ $json.id }}",
+              "type": "string"
+            },
+            {
+              "id": "720aadca-9d38-491f-a856-874f9ca40455",
+              "name": "Data Encontrada",
+              "value": "={{ $json.data_encontrada }}",
+              "type": "string"
+            },
+            {
+              "id": "fdee9b74-f8c7-407b-81d2-9ce3e3d482ab",
+              "name": "Empresa",
+              "value": "={{ $json.empresa }}",
+              "type": "string"
+            },
+            {
+              "id": "d50b9d4b-5c5b-4b31-8e3c-3e95d385ad3c",
+              "name": "Cargo",
+              "value": "={{ $json.cargo }}",
+              "type": "string"
+            },
+            {
+              "id": "4f471b95-e25e-435b-a072-54b66283fe9c",
+              "name": "Local",
+              "value": "={{ $json.localizacao }}",
+              "type": "string"
+            },
+            {
+              "id": "917cbe90-8bf3-4a37-a6c6-da1e84712972",
+              "name": "Tipo",
+              "value": "={{ $json.tipo }}",
+              "type": "string"
+            },
+            {
+              "id": "988d9665-f049-420c-a719-ebb27bd71076",
+              "name": "Link",
+              "value": "={{ $json.link }}",
+              "type": "string"
+            },
+            {
+              "id": "0f2f89b5-2f57-4a36-9f26-563d89439950",
+              "name": "Score IA",
+              "value": "={{ $json.score }}",
+              "type": "number"
+            },
+            {
+              "id": "665dcb9b-5af3-40c2-9624-b7efa9d2ba7f",
+              "name": "Motivos Match",
+              "value": "={{ JSON.stringify($json.motivos) }}",
+              "type": "string"
+            },
+            {
+              "id": "ef8afe9c-2e58-4de3-a8f6-47edb3f4ea30",
+              "name": "Lacunas",
+              "value": "={{ JSON.stringify($json.lacunas) }}",
+              "type": "string"
+            },
+            {
+              "id": "1f721f28-3e1f-4d16-935b-9af575d0db17",
+              "name": "Status Telegram",
+              "value": "Não enviado",
+              "type": "string"
+            },
+            {
+              "id": "ae1b55da-e967-4b52-8ddd-5676af529895",
+              "name": "Data Aprovação",
+              "value": "",
+              "type": "string"
+            },
+            {
+              "id": "63fba774-68de-4055-8c46-c9c2f62b72ef",
+              "name": "Currículo Gerado",
+              "value": "",
+              "type": "string"
+            },
+            {
+              "id": "bc7990c9-89a8-4771-b8ba-dacc8b8183f2",
+              "name": "Mensagem Gerada",
+              "value": "",
+              "type": "string"
+            },
+            {
+              "id": "f5171f8d-c0ad-4ad3-ae3f-79a167120665",
+              "name": "Data Envio",
+              "value": "",
+              "type": "string"
+            },
+            {
+              "id": "5d2f08c0-2628-48ae-a05b-223896ba0f40",
+              "name": "Status Processo",
+              "value": "Reprovada pela IA",
+              "type": "string"
+            },
+            {
+              "id": "a03dca15-f7c3-430e-accc-d903e0cbe8e8",
+              "name": "Observações",
+              "value": "={{ ('Fonte: '+$json.fonte+'\\n\\n'+$json.descricao).slice(0,49000) }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "312a3606-f809-4c84-b646-cf44bee4605c",
+      "name": "CRM Row - Reprovada IA",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1840,
+        336
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "ad8ad62b-ea98-482a-ac50-fb1a96528ac7",
+              "name": "ID",
+              "value": "={{ $json.id }}",
+              "type": "string"
+            },
+            {
+              "id": "4c58a007-6262-4b8d-8c50-308367a4c150",
+              "name": "Data Encontrada",
+              "value": "={{ $json.data_encontrada }}",
+              "type": "string"
+            },
+            {
+              "id": "af4dff44-8851-4e71-80d7-ae4f983b7958",
+              "name": "Empresa",
+              "value": "={{ $json.empresa }}",
+              "type": "string"
+            },
+            {
+              "id": "02fd3795-b5f6-4579-a5e8-da881d2dfcdf",
+              "name": "Cargo",
+              "value": "={{ $json.cargo }}",
+              "type": "string"
+            },
+            {
+              "id": "d737da39-5101-4b0f-8b3d-2cf529f1ed6c",
+              "name": "Local",
+              "value": "={{ $json.localizacao }}",
+              "type": "string"
+            },
+            {
+              "id": "d80774f9-4c49-4426-94e9-c712a7cf2142",
+              "name": "Tipo",
+              "value": "={{ $json.tipo }}",
+              "type": "string"
+            },
+            {
+              "id": "db16f538-f9d6-4d5e-943d-1950ebb07c71",
+              "name": "Link",
+              "value": "={{ $json.link }}",
+              "type": "string"
+            },
+            {
+              "id": "760ecfd1-4519-4502-af3a-2bd8054cef8c",
+              "name": "Score IA",
+              "value": "={{ $json.score }}",
+              "type": "number"
+            },
+            {
+              "id": "fdfdceeb-c67b-4ab6-9095-70bf73390050",
+              "name": "Motivos Match",
+              "value": "={{ JSON.stringify($json.motivos) }}",
+              "type": "string"
+            },
+            {
+              "id": "2e77db16-70e1-416f-9502-bad733b95ee5",
+              "name": "Lacunas",
+              "value": "={{ JSON.stringify($json.lacunas) }}",
+              "type": "string"
+            },
+            {
+              "id": "379d4901-8bd8-4029-8df0-91fcc13a386f",
+              "name": "Status Telegram",
+              "value": "Aguardando aprovação",
+              "type": "string"
+            },
+            {
+              "id": "ee11bdfd-c422-4ff8-a443-100dcaa43bf1",
+              "name": "Data Aprovação",
+              "value": "",
+              "type": "string"
+            },
+            {
+              "id": "d7422b25-ada0-4124-9db4-2fff37ef0e4d",
+              "name": "Currículo Gerado",
+              "value": "",
+              "type": "string"
+            },
+            {
+              "id": "e166289c-8acd-4998-a61a-d982fda81fcb",
+              "name": "Mensagem Gerada",
+              "value": "",
+              "type": "string"
+            },
+            {
+              "id": "3161a94d-ea0e-4d1f-8ae9-67f958e65f8e",
+              "name": "Data Envio",
+              "value": "",
+              "type": "string"
+            },
+            {
+              "id": "a51441d3-42bf-4397-8f41-de7e9db03b29",
+              "name": "Status Processo",
+              "value": "Aguardando decisão humana",
+              "type": "string"
+            },
+            {
+              "id": "b3751a13-51c1-424b-a71f-6c0fc5ff2a4e",
+              "name": "Observações",
+              "value": "={{ ('Fonte: '+$json.fonte+'\\n\\n'+$json.descricao).slice(0,49000) }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "4be6e98a-c085-4636-ace0-f5145db57e1c",
+      "name": "CRM Row - Aguardando Humano",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1936,
+        672
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "appendOrUpdate",
+        "documentId": {
+          "__rl": true,
+          "value": "1MTNBXky0f9Xw0fBzeXDNtbE-wVl-w5GgBb-3unRbcRA",
+          "mode": "list",
+          "cachedResultName": "Controle_Candidaturas_IA",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1MTNBXky0f9Xw0fBzeXDNtbE-wVl-w5GgBb-3unRbcRA/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "gid=0",
+          "mode": "list",
+          "cachedResultName": "Vagas",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1MTNBXky0f9Xw0fBzeXDNtbE-wVl-w5GgBb-3unRbcRA/edit#gid=0"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": {},
+          "matchingColumns": [
+            "ID"
+          ],
+          "schema": [
+            {
+              "id": "ID",
+              "displayName": "ID",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Data Encontrada",
+              "displayName": "Data Encontrada",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Empresa",
+              "displayName": "Empresa",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Cargo",
+              "displayName": "Cargo",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Local",
+              "displayName": "Local",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Tipo",
+              "displayName": "Tipo",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Link",
+              "displayName": "Link",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Score IA",
+              "displayName": "Score IA",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Motivos Match",
+              "displayName": "Motivos Match",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Lacunas",
+              "displayName": "Lacunas",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Status Telegram",
+              "displayName": "Status Telegram",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Data Aprovação",
+              "displayName": "Data Aprovação",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Currículo Gerado",
+              "displayName": "Currículo Gerado",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Mensagem Gerada",
+              "displayName": "Mensagem Gerada",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Data Envio",
+              "displayName": "Data Envio",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Status Processo",
+              "displayName": "Status Processo",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Observações",
+              "displayName": "Observações",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "id": "28dd5207-74b7-4874-a2ba-5bece9861f63",
+      "name": "Sheets - Reprovada IA",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        2064,
+        336
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000,
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "RzI3ViCpF0C7DXwk",
+          "name": "Google Sheets"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "appendOrUpdate",
+        "documentId": {
+          "__rl": true,
+          "value": "1MTNBXky0f9Xw0fBzeXDNtbE-wVl-w5GgBb-3unRbcRA",
+          "mode": "list",
+          "cachedResultName": "Controle_Candidaturas_IA",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1MTNBXky0f9Xw0fBzeXDNtbE-wVl-w5GgBb-3unRbcRA/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "gid=0",
+          "mode": "list",
+          "cachedResultName": "Vagas",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1MTNBXky0f9Xw0fBzeXDNtbE-wVl-w5GgBb-3unRbcRA/edit#gid=0"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": {},
+          "matchingColumns": [
+            "ID"
+          ],
+          "schema": [
+            {
+              "id": "ID",
+              "displayName": "ID",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Data Encontrada",
+              "displayName": "Data Encontrada",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Empresa",
+              "displayName": "Empresa",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Cargo",
+              "displayName": "Cargo",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Local",
+              "displayName": "Local",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Tipo",
+              "displayName": "Tipo",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Link",
+              "displayName": "Link",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Score IA",
+              "displayName": "Score IA",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Motivos Match",
+              "displayName": "Motivos Match",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Lacunas",
+              "displayName": "Lacunas",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Status Telegram",
+              "displayName": "Status Telegram",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Data Aprovação",
+              "displayName": "Data Aprovação",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Currículo Gerado",
+              "displayName": "Currículo Gerado",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Mensagem Gerada",
+              "displayName": "Mensagem Gerada",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Data Envio",
+              "displayName": "Data Envio",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Status Processo",
+              "displayName": "Status Processo",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Observações",
+              "displayName": "Observações",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "id": "83ac00d2-d78b-4143-a570-709c5eea7af5",
+      "name": "Sheets - Pending Approval",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        2160,
+        672
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000,
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "RzI3ViCpF0C7DXwk",
+          "name": "Google Sheets"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "text": "=🚀 Nova vaga encontrada\n\nEmpresa: {{ $('CRM Row - Aguardando Humano').item.json['Empresa'] }}\nCargo: {{ $('CRM Row - Aguardando Humano').item.json['Cargo'] }}\nScore: {{ $('CRM Row - Aguardando Humano').item.json['Score IA'] }}%\n\nPontos fortes:\n{{ JSON.parse($('CRM Row - Aguardando Humano').item.json['Motivos Match']).map(x => '• '+x).join('\\n') }}\n\nLacunas:\n{{ JSON.parse($('CRM Row - Aguardando Humano').item.json['Lacunas']).map(x => '• '+x).join('\\n') }}\n\nDeseja prosseguir?",
+        "replyMarkup": "inlineKeyboard",
+        "inlineKeyboard": {
+          "rows": [
+            {
+              "row": {
+                "buttons": [
+                  {
+                    "text": "✅ Aprovar",
+                    "additionalFields": {
+                      "callback_data": "={{ 'approve:' + $('CRM Row - Aguardando Humano').item.json.ID }}"
+                    }
+                  },
+                  {
+                    "text": "❌ Rejeitar",
+                    "additionalFields": {
+                      "callback_data": "={{ 'reject:' + $('CRM Row - Aguardando Humano').item.json.ID }}"
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "id": "3c0873d3-3097-4e1d-ad98-fbade39758b2",
+      "name": "Telegram - Human Approval",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        2400,
+        672
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "webhookId": "fed6aac3-ff89-490e-b041-c3f95bc3d893",
+      "credentials": {
+        "telegramApi": {
+          "id": "CPXOvo77XBzjzjlS",
+          "name": "Radar Vagas"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "updates": [
+          "callback_query"
+        ],
+        "additionalFields": {}
+      },
+      "id": "e5ffd7a0-d351-4aa6-824f-bd41ea209382",
+      "name": "Telegram Trigger - Callback",
+      "type": "n8n-nodes-base.telegramTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -2464,
+        960
+      ],
+      "webhookId": "188764e8-908c-462c-a04a-40b06fcd71e4",
+      "credentials": {
+        "telegramApi": {
+          "id": "CPXOvo77XBzjzjlS",
+          "name": "Radar Vagas"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const q = $json.callback_query;\n\nif (!q?.data) {\n  throw new Error('Callback sem data');\n}\n\nconst [action, id] = q.data.split(':');\n\nconst allowedActions = [\n  'approve',\n  'reject',\n  'retry'\n];\n\nif (!allowedActions.includes(action) || !id) {\n  throw new Error(\n    'Callback inválido: ' + q.data\n  );\n}\n\nreturn [{\n  json: {\n    action,\n    id,\n    queryId: q.id,\n    chatId: String(q.message?.chat?.id || ''),\n    userId: String(q.from?.id || ''),\n    messageId: q.message?.message_id\n  }\n}];"
+      },
+      "id": "b8c16286-5351-4e2e-8cc4-d54b37674d74",
+      "name": "Parse Telegram Callback",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -2240,
+        960
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "146246af-ce8f-47bb-ba04-758305389a0e",
+              "leftValue": "={{ $json.chatId }}",
+              "rightValue": "=5056865988",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "c2445c3f-42e2-4852-96ea-18da29e46396",
+      "name": "IF Authorized Telegram Chat",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -2016,
+        960
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "callback",
+        "queryId": "={{ $json.queryId }}",
+        "additionalFields": {
+          "show_alert": true,
+          "text": "Ação não autorizada."
+        }
+      },
+      "id": "580d903f-51ff-4285-820f-5bee619304ec",
+      "name": "Telegram - Reject Unauthorized Callback",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        -1744,
+        1264
+      ],
+      "webhookId": "eac6d625-2dbc-4f0f-bd05-8ad9e175f508",
+      "credentials": {
+        "telegramApi": {
+          "id": "CPXOvo77XBzjzjlS",
+          "name": "Radar Vagas"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "1MTNBXky0f9Xw0fBzeXDNtbE-wVl-w5GgBb-3unRbcRA",
+          "mode": "list",
+          "cachedResultName": "Controle_Candidaturas_IA",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1MTNBXky0f9Xw0fBzeXDNtbE-wVl-w5GgBb-3unRbcRA/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "gid=0",
+          "mode": "list",
+          "cachedResultName": "Vagas",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1MTNBXky0f9Xw0fBzeXDNtbE-wVl-w5GgBb-3unRbcRA/edit#gid=0"
+        },
+        "filtersUI": {
+          "values": [
+            {
+              "lookupColumn": "ID",
+              "lookupValue": "={{ $('Parse Telegram Callback').item.json.id }}"
+            }
+          ]
+        },
+        "options": {
+          "returnFirstMatch": true
+        }
+      },
+      "id": "74c7ead1-969b-4902-9ab2-5798f462c160",
+      "name": "Sheets - Lookup Job by ID",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        -1376,
+        944
+      ],
+      "settings": {
+        "alwaysOutputData": true
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000,
+      "alwaysOutputData": true,
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "RzI3ViCpF0C7DXwk",
+          "name": "Google Sheets"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const cb = $('Parse Telegram Callback').item.json;\nif (!$json.ID) throw new Error('Vaga não encontrada no Sheets: '+cb.id);\nreturn [{json:{...$json,_action:cb.action,_queryId:cb.queryId,_chatId:cb.chatId,_messageId:cb.messageId}}];"
+      },
+      "id": "8b32cfca-4bf1-48ff-b8de-7153b61daf9c",
+      "name": "Combine Callback + CRM Row",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1184,
+        944
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "8ae3576d-af9b-4afd-8cdc-43f60f9e6d97",
+              "leftValue": "={{ $json._action }}",
+              "rightValue": "reject",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "f12bfd76-a373-4666-ac1e-8f82e60dab57",
+      "name": "IF Human Rejected",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        128,
+        1920
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "59ebe7a1-d62d-4978-a153-57cd3c052faa",
+              "name": "ID",
+              "value": "={{ $json.ID }}",
+              "type": "string"
+            },
+            {
+              "id": "069f93d5-360e-4c5b-8931-a6496c9530bb",
+              "name": "Status Telegram",
+              "value": "Rejeitada pelo humano",
+              "type": "string"
+            },
+            {
+              "id": "09a198cb-1aa3-492b-931a-78b9867b1ab6",
+              "name": "Status Processo",
+              "value": "Rejeitada pelo humano",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "075ceba0-06d2-4d09-b83d-d76823bd698b",
+      "name": "CRM Update - Human Rejected",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        400,
+        2080
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "appendOrUpdate",
+        "documentId": {
+          "__rl": true,
+          "value": "1MTNBXky0f9Xw0fBzeXDNtbE-wVl-w5GgBb-3unRbcRA",
+          "mode": "list",
+          "cachedResultName": "Controle_Candidaturas_IA",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1MTNBXky0f9Xw0fBzeXDNtbE-wVl-w5GgBb-3unRbcRA/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "gid=0",
+          "mode": "list",
+          "cachedResultName": "Vagas",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1MTNBXky0f9Xw0fBzeXDNtbE-wVl-w5GgBb-3unRbcRA/edit#gid=0"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": {},
+          "matchingColumns": [
+            "ID"
+          ],
+          "schema": [
+            {
+              "id": "ID",
+              "displayName": "ID",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Data Encontrada",
+              "displayName": "Data Encontrada",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Empresa",
+              "displayName": "Empresa",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Cargo",
+              "displayName": "Cargo",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Local",
+              "displayName": "Local",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Tipo",
+              "displayName": "Tipo",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Link",
+              "displayName": "Link",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Score IA",
+              "displayName": "Score IA",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Motivos Match",
+              "displayName": "Motivos Match",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Lacunas",
+              "displayName": "Lacunas",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Status Telegram",
+              "displayName": "Status Telegram",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Data Aprovação",
+              "displayName": "Data Aprovação",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Currículo Gerado",
+              "displayName": "Currículo Gerado",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Mensagem Gerada",
+              "displayName": "Mensagem Gerada",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Data Envio",
+              "displayName": "Data Envio",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Status Processo",
+              "displayName": "Status Processo",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Observações",
+              "displayName": "Observações",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "parameters",
+              "displayName": "parameters",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "name",
+              "displayName": "name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "type",
+              "displayName": "type",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "typeVersion",
+              "displayName": "typeVersion",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "id": "89b924ff-d600-424a-85cd-59ea9dc8b9a2",
+      "name": "Sheets - Human Rejected",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        624,
+        2080
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000,
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "RzI3ViCpF0C7DXwk",
+          "name": "Google Sheets"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('Combine Callback + CRM Row').item.json._chatId }}",
+        "text": "=❌ Vaga rejeitada.  Empresa: {{ $('Combine Callback + CRM Row').item.json.Empresa }} Cargo: {{ $('Combine Callback + CRM Row').item.json.Cargo }}  A decisão foi registrada no CRM.",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "id": "73192a67-569e-4bfd-b758-b9da60208c5f",
+      "name": "Telegram - Confirm Rejection",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        848,
+        2080
+      ],
+      "webhookId": "81e56250-e194-4d11-aea1-fd060863ef80",
+      "credentials": {
+        "telegramApi": {
+          "id": "CPXOvo77XBzjzjlS",
+          "name": "Radar Vagas"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "fe3fc769-7b6a-403a-bbcb-79601340403b",
+              "name": "ID",
+              "value": "={{ $json.ID }}",
+              "type": "string"
+            },
+            {
+              "id": "9310b077-de89-412a-b6a9-b576824d1aa5",
+              "name": "Status Telegram",
+              "value": "Aprovada",
+              "type": "string"
+            },
+            {
+              "id": "a0e45e88-42ca-4905-86d6-63e00f2df5b7",
+              "name": "Data Aprovação",
+              "value": "={{ $now.toISO() }}",
+              "type": "string"
+            },
+            {
+              "id": "d1e7d33e-0793-4a52-8d34-9b32e9cf61e7",
+              "name": "Status Processo",
+              "value": "Aprovada - gerando materiais",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "0294c720-f086-4239-86e6-5f326aa78b81",
+      "name": "CRM Update - Approved",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        576,
+        1808
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "appendOrUpdate",
+        "documentId": {
+          "__rl": true,
+          "value": "1MTNBXky0f9Xw0fBzeXDNtbE-wVl-w5GgBb-3unRbcRA",
+          "mode": "list",
+          "cachedResultName": "Controle_Candidaturas_IA",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1MTNBXky0f9Xw0fBzeXDNtbE-wVl-w5GgBb-3unRbcRA/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "gid=0",
+          "mode": "list",
+          "cachedResultName": "Vagas",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1MTNBXky0f9Xw0fBzeXDNtbE-wVl-w5GgBb-3unRbcRA/edit#gid=0"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": {},
+          "matchingColumns": [
+            "ID"
+          ],
+          "schema": [
+            {
+              "id": "ID",
+              "displayName": "ID",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Data Encontrada",
+              "displayName": "Data Encontrada",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Empresa",
+              "displayName": "Empresa",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Cargo",
+              "displayName": "Cargo",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Local",
+              "displayName": "Local",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Tipo",
+              "displayName": "Tipo",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Link",
+              "displayName": "Link",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Score IA",
+              "displayName": "Score IA",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Motivos Match",
+              "displayName": "Motivos Match",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Lacunas",
+              "displayName": "Lacunas",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Status Telegram",
+              "displayName": "Status Telegram",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Data Aprovação",
+              "displayName": "Data Aprovação",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Currículo Gerado",
+              "displayName": "Currículo Gerado",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Mensagem Gerada",
+              "displayName": "Mensagem Gerada",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Data Envio",
+              "displayName": "Data Envio",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Status Processo",
+              "displayName": "Status Processo",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Observações",
+              "displayName": "Observações",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "id": "78bafc26-bbb6-40a0-a827-d5408edf60a0",
+      "name": "Sheets - Mark Approved",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        800,
+        1808
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000,
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "RzI3ViCpF0C7DXwk",
+          "name": "Google Sheets"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('Combine Callback + CRM Row').item.json._chatId }}",
+        "text": "=✅ Vaga aprovada.  Empresa: {{ $('Combine Callback + CRM Row').item.json.Empresa }} Cargo: {{ $('Combine Callback + CRM Row').item.json.Cargo }}  Estou gerando o currículo otimizado e os materiais de candidatura.",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "id": "dbca513b-eb2b-4b90-97ba-ed7fef3c813d",
+      "name": "Telegram - Confirm Approval",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1472,
+        1808
+      ],
+      "webhookId": "d149c73d-4f75-472b-843c-45b814d9ae54",
+      "credentials": {
+        "telegramApi": {
+          "id": "CPXOvo77XBzjzjlS",
+          "name": "Radar Vagas"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "folderId": "1rTq-nvuyoUm9lvR3aWhFqViUr5cMqHXA",
+        "title": "={{ 'CV_' + $('Combine Callback + CRM Row').item.json.ID + '_' + $('Combine Callback + CRM Row').item.json.Cargo }}"
+      },
+      "id": "4a8915a9-8fcb-4848-ae95-0f2dcdfc0d0e",
+      "name": "Google Docs - Create CV",
+      "type": "n8n-nodes-base.googleDocs",
+      "typeVersion": 2,
+      "position": [
+        2624,
+        1792
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000,
+      "credentials": {
+        "googleDocsOAuth2Api": {
+          "id": "FOCArv9pHSAJSAp1",
+          "name": "Google Docs"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "documentURL": "={{ $('Google Docs - Create CV').item.json.id }}",
+        "actionsUi": {
+          "actionFields": [
+            {
+              "action": "insert",
+              "locationChoice": "location",
+              "text": "={{ $('Prepare CV Formatting').item.json.cv_text }}"
+            }
+          ]
+        }
+      },
+      "id": "366acd36-8aa1-4c03-a091-16ef23d2a4a4",
+      "name": "Google Docs - Write CV",
+      "type": "n8n-nodes-base.googleDocs",
+      "typeVersion": 2,
+      "position": [
+        2864,
+        1792
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000,
+      "credentials": {
+        "googleDocsOAuth2Api": {
+          "id": "FOCArv9pHSAJSAp1",
+          "name": "Google Docs"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "50b7076e-6845-419d-8c70-9036f42fbc24",
+              "name": "ID",
+              "value": "={{ $('Combine Callback + CRM Row').item.json.ID }}",
+              "type": "string"
+            },
+            {
+              "id": "a3540c00-2750-43e7-a7d3-72585cb4aadc",
+              "name": "Currículo Gerado",
+              "value": "={{ 'https://docs.google.com/document/d/' + $('Google Docs - Create CV').item.json.id + '/edit' }}",
+              "type": "string"
+            },
+            {
+              "id": "f41b8e2b-8801-4efa-9859-d6d5acf3c899",
+              "name": "Mensagem Gerada",
+              "value": "={{ JSON.stringify($json) }}",
+              "type": "string"
+            },
+            {
+              "id": "bc8603ed-5356-4432-b5fd-6321a67274fb",
+              "name": "Status Telegram",
+              "value": "Aprovada",
+              "type": "string"
+            },
+            {
+              "id": "5fe3bf79-3806-4fca-a1be-b38c673d7668",
+              "name": "Status Processo",
+              "value": "Materiais gerados - aguardando envio humano",
+              "type": "string"
+            },
+            {
+              "id": "a005ee90-cc8e-4f25-a2a6-44b137e074b5",
+              "name": "Data Envio",
+              "value": "",
+              "type": "string"
+            },
+            {
+              "id": "04a84b09-a62c-41c0-b038-8d73e94edb83",
+              "name": "Carta de Apresentação",
+              "value": "={{ $json.cover_letter }}",
+              "type": "string"
+            },
+            {
+              "id": "c0670a78-2af4-4282-951a-b6e52d4bc90b",
+              "name": "Canal Candidatura",
+              "value": "={{ $json.application_channel }}",
+              "type": "string"
+            },
+            {
+              "id": "18348e49-8835-493b-a8c3-6d5ac2ccff9e",
+              "name": "E-mail Candidatura",
+              "value": "={{ $json.application_email }}",
+              "type": "string"
+            },
+            {
+              "id": "46ab9b8e-1013-4ebf-9625-d68e12a60667",
+              "name": "URL Candidatura",
+              "value": "={{ $json.application_url }}",
+              "type": "string"
+            },
+            {
+              "id": "1c2af933-619b-446d-b6d6-ad7ee6642b52",
+              "name": "Instruções Candidatura",
+              "value": "={{ $json.application_instructions }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "58888b0b-a13b-4c16-aa34-37158e2f0f8c",
+      "name": "CRM Final Update",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        3616,
+        1792
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "appendOrUpdate",
+        "documentId": {
+          "__rl": true,
+          "value": "1MTNBXky0f9Xw0fBzeXDNtbE-wVl-w5GgBb-3unRbcRA",
+          "mode": "list",
+          "cachedResultName": "Controle_Candidaturas_IA",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1MTNBXky0f9Xw0fBzeXDNtbE-wVl-w5GgBb-3unRbcRA/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "gid=0",
+          "mode": "list",
+          "cachedResultName": "Vagas",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1MTNBXky0f9Xw0fBzeXDNtbE-wVl-w5GgBb-3unRbcRA/edit#gid=0"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": {},
+          "matchingColumns": [
+            "ID"
+          ],
+          "schema": [
+            {
+              "id": "ID",
+              "displayName": "ID",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Data Encontrada",
+              "displayName": "Data Encontrada",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Empresa",
+              "displayName": "Empresa",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Cargo",
+              "displayName": "Cargo",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Local",
+              "displayName": "Local",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Tipo",
+              "displayName": "Tipo",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Link",
+              "displayName": "Link",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Score IA",
+              "displayName": "Score IA",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Motivos Match",
+              "displayName": "Motivos Match",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Lacunas",
+              "displayName": "Lacunas",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Status Telegram",
+              "displayName": "Status Telegram",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Data Aprovação",
+              "displayName": "Data Aprovação",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Currículo Gerado",
+              "displayName": "Currículo Gerado",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Mensagem Gerada",
+              "displayName": "Mensagem Gerada",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Data Envio",
+              "displayName": "Data Envio",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Status Processo",
+              "displayName": "Status Processo",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Observações",
+              "displayName": "Observações",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "id": "7a874dd4-a823-420e-bc9b-170e991caaa6",
+      "name": "Sheets - Final CRM",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        3840,
+        1792
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000,
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "RzI3ViCpF0C7DXwk",
+          "name": "Google Sheets"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "=",
+        "text": "=✅ Materiais gerados\n\nEmpresa:\n{{ $('Combine Callback + CRM Row').item.json.Empresa }}\n\nCargo:\n{{ $('Combine Callback + CRM Row').item.json.Cargo }}\n\nComo se candidatar:\n{{ $('Parse Outreach Result').item.json.application_channel }}\n\nInstruções:\n{{ $('Parse Outreach Result').item.json.application_instructions }}\n\nE-mail de candidatura:\n{{ $('Parse Outreach Result').item.json.application_email || 'Não informado' }}\n\nLink de candidatura:\n{{ $('Parse Outreach Result').item.json.application_url || 'Não informado' }}\n\nCurrículo:\n{{ $('Sheets - Final CRM').item.json['Currículo Gerado'] }}\n\nCarta de apresentação:\n{{ $('Parse Outreach Result').item.json.cover_letter }}\n\nStatus:\nMateriais prontos. A candidatura ainda não foi enviada automaticamente.",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "id": "ceb7ead3-e975-4044-b28c-8f873a6372fe",
+      "name": "Telegram - Materials Ready",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        4048,
+        1792
+      ],
+      "webhookId": "21264f02-42c7-46c2-a5b3-e82287046ece",
+      "credentials": {
+        "telegramApi": {
+          "id": "CPXOvo77XBzjzjlS",
+          "name": "Radar Vagas"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "576d4d92-f9bf-4a34-bdd3-5050d0faacb4",
+              "name": "timestamp",
+              "value": "={{ $now.toISO() }}",
+              "type": "string"
+            },
+            {
+              "id": "86bbceb6-61db-49d3-80d1-9dd9eb601807",
+              "name": "execution_id",
+              "value": "={{ $execution.id }}",
+              "type": "string"
+            },
+            {
+              "id": "bd4ebbf5-48c9-4e62-ba05-0878df84764e",
+              "name": "event",
+              "value": "Reprovada pela IA",
+              "type": "string"
+            },
+            {
+              "id": "5ac43b6b-bcfb-470b-b9ed-faeab7bc3d02",
+              "name": "job_id",
+              "value": "={{ $json.ID || '' }}",
+              "type": "string"
+            },
+            {
+              "id": "4b8de083-7a7d-44d2-bd31-380eb48d47ca",
+              "name": "details",
+              "value": "={{ JSON.stringify($json).slice(0,10000) }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "5ea53363-44d6-4316-a381-4167f9d15609",
+      "name": "Log - AI Rejection",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        2304,
+        336
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "1MTNBXky0f9Xw0fBzeXDNtbE-wVl-w5GgBb-3unRbcRA",
+          "mode": "list",
+          "cachedResultName": "Controle_Candidaturas_IA",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1MTNBXky0f9Xw0fBzeXDNtbE-wVl-w5GgBb-3unRbcRA/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": 2095120258,
+          "mode": "list",
+          "cachedResultName": "Logs",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1MTNBXky0f9Xw0fBzeXDNtbE-wVl-w5GgBb-3unRbcRA/edit#gid=2095120258"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "timestamp",
+              "displayName": "timestamp",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "execution_id",
+              "displayName": "execution_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "event",
+              "displayName": "event",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "job_id",
+              "displayName": "job_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "details",
+              "displayName": "details",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "id": "6eb1e5c6-1412-4873-b985-cba5a61f75df",
+      "name": "Logs - AI Rejection",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        2512,
+        336
+      ],
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 2000,
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "RzI3ViCpF0C7DXwk",
+          "name": "Google Sheets"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "2733c3cc-6d10-4391-b6b9-05fac13537e8",
+              "name": "timestamp",
+              "value": "={{ $now.toISO() }}",
+              "type": "string"
+            },
+            {
+              "id": "a1fb5e23-75cb-43a7-a762-3e5f3f0fb94b",
+              "name": "execution_id",
+              "value": "={{ $execution.id }}",
+              "type": "string"
+            },
+            {
+              "id": "9350c7af-54ec-49fe-ae5f-b0d023f72842",
+              "name": "event",
+              "value": "Rejeitada pelo humano",
+              "type": "string"
+            },
+            {
+              "id": "5a0ba798-c801-4c5b-8997-af3ebdc94ffe",
+              "name": "job_id",
+              "value": "={{ $json.ID || '' }}",
+              "type": "string"
+            },
+            {
+              "id": "cb1df7ed-a86f-4616-81bd-fdc722465c0c",
+              "name": "details",
+              "value": "={{ JSON.stringify($json).slice(0,10000) }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "96774a4c-5691-4087-8c40-ba95c157bb1e",
+      "name": "Log - Human Rejection",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1056,
+        2080
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "1MTNBXky0f9Xw0fBzeXDNtbE-wVl-w5GgBb-3unRbcRA",
+          "mode": "list",
+          "cachedResultName": "Controle_Candidaturas_IA",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1MTNBXky0f9Xw0fBzeXDNtbE-wVl-w5GgBb-3unRbcRA/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": 2095120258,
+          "mode": "list",
+          "cachedResultName": "Logs",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1MTNBXky0f9Xw0fBzeXDNtbE-wVl-w5GgBb-3unRbcRA/edit#gid=2095120258"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "timestamp",
+              "displayName": "timestamp",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "execution_id",
+              "displayName": "execution_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "event",
+              "displayName": "event",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "job_id",
+              "displayName": "job_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "details",
+              "displayName": "details",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "id": "e4fa75ff-495b-4d76-bebf-921f8eb35ed2",
+      "name": "Logs - Human Rejection",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        1280,
+        2080
+      ],
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 2000,
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "RzI3ViCpF0C7DXwk",
+          "name": "Google Sheets"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "e5c2824a-1ccd-4934-ba40-d2214122a253",
+              "name": "timestamp",
+              "value": "={{ $now.toISO() }}",
+              "type": "string"
+            },
+            {
+              "id": "c5ced395-66d3-4f6d-a56e-d26aed6f8ebe",
+              "name": "execution_id",
+              "value": "={{ $execution.id }}",
+              "type": "string"
+            },
+            {
+              "id": "8fec94a9-909c-4600-8f9e-3094302546cf",
+              "name": "event",
+              "value": "Materiais gerados",
+              "type": "string"
+            },
+            {
+              "id": "32879c3c-fc63-4962-9111-ecb88b96f083",
+              "name": "job_id",
+              "value": "={{ $json.ID || '' }}",
+              "type": "string"
+            },
+            {
+              "id": "ae6524d8-5ba7-41d8-bb81-35acfe0d9a1b",
+              "name": "details",
+              "value": "={{ JSON.stringify($json).slice(0,10000) }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "99156b98-3502-42a4-a438-ab4ec89fafdb",
+      "name": "Log - Materials Ready",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        4272,
+        1792
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "1MTNBXky0f9Xw0fBzeXDNtbE-wVl-w5GgBb-3unRbcRA",
+          "mode": "list",
+          "cachedResultName": "Controle_Candidaturas_IA",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1MTNBXky0f9Xw0fBzeXDNtbE-wVl-w5GgBb-3unRbcRA/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": 2095120258,
+          "mode": "list",
+          "cachedResultName": "Logs",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1MTNBXky0f9Xw0fBzeXDNtbE-wVl-w5GgBb-3unRbcRA/edit#gid=2095120258"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "timestamp",
+              "displayName": "timestamp",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "execution_id",
+              "displayName": "execution_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "event",
+              "displayName": "event",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "job_id",
+              "displayName": "job_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "details",
+              "displayName": "details",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "id": "070bdb36-1ba8-40a6-a79f-da1fb441064d",
+      "name": "Logs - Materials Ready",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        4496,
+        1792
+      ],
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 2000,
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "RzI3ViCpF0C7DXwk",
+          "name": "Google Sheets"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "maxItems": 5
+      },
+      "type": "n8n-nodes-base.limit",
+      "typeVersion": 1,
+      "position": [
+        272,
+        224
+      ],
+      "id": "89226ba4-6be1-4b93-8ddb-949b63e267d5",
+      "name": "Limit"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const raw = $json.output;\n\nif (!raw) {\n  throw new Error(\n    'O Agent 4 - Career Coach não retornou conteúdo no campo output.'\n  );\n}\n\nlet cvText = '';\n\nif (typeof raw === 'string') {\n  cvText = raw.trim();\n} else if (typeof raw === 'object' && raw !== null) {\n  cvText = String(\n    raw.cv_text ??\n    raw.output ??\n    ''\n  ).trim();\n}\n\nif (!cvText) {\n  throw new Error(\n    'Não foi possível localizar o conteúdo do currículo.'\n  );\n}\n\nreturn {\n  json: {\n    cv_text: cvText,\n    cv_length: cvText.length\n  }\n};"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2384,
+        1792
+      ],
+      "id": "a5bfd8d7-9b7e-4400-a0b5-273c6cbd7b72",
+      "name": "Prepare CV Formatting",
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "674d5dad-1406-40d2-a15a-3e663b9cba2a",
+              "name": "timestamp",
+              "value": "={{ $now.toISO() }}",
+              "type": "string"
+            },
+            {
+              "id": "5e1d7678-8be9-452d-933e-2865a6c84ac7",
+              "name": "execution_id",
+              "value": "={{ $execution.id }}",
+              "type": "string"
+            },
+            {
+              "id": "6c1b47cb-166d-4c99-aeec-55dbe188fc45",
+              "name": "event",
+              "value": "Aprovada pelo humano",
+              "type": "string"
+            },
+            {
+              "id": "094c22c7-a7f4-4383-93f1-c4e527841637",
+              "name": "job_id",
+              "value": "={{ $('CRM Update - Approved').item.json.ID }}",
+              "type": "string"
+            },
+            {
+              "id": "1cda5b5c-a163-4720-8f6e-6cfb430c5533",
+              "name": "details",
+              "value": "=={{ JSON.stringify($('CRM Update - Approved').item.json).slice(0,10000) }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.5,
+      "position": [
+        1024,
+        1808
+      ],
+      "id": "f53180e8-cc7e-4f7f-bbeb-cc393d18e485",
+      "name": "Log - Human Approval"
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "1MTNBXky0f9Xw0fBzeXDNtbE-wVl-w5GgBb-3unRbcRA",
+          "mode": "list",
+          "cachedResultName": "Controle_Candidaturas_IA",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1MTNBXky0f9Xw0fBzeXDNtbE-wVl-w5GgBb-3unRbcRA/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": 2095120258,
+          "mode": "list",
+          "cachedResultName": "Logs",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1MTNBXky0f9Xw0fBzeXDNtbE-wVl-w5GgBb-3unRbcRA/edit#gid=2095120258"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "timestamp",
+              "displayName": "timestamp",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "execution_id",
+              "displayName": "execution_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "event",
+              "displayName": "event",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "job_id",
+              "displayName": "job_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "details",
+              "displayName": "details",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        1248,
+        1808
+      ],
+      "id": "d81277e2-902d-4fc7-85d1-5d5c8556ed03",
+      "name": "Logs - Human Approval",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "RzI3ViCpF0C7DXwk",
+          "name": "Google Sheets"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=Crie materiais de candidatura usando somente fatos disponíveis.\n\nEMPRESA:\n{{ $('Combine Callback + CRM Row').item.json.Empresa }}\n\nCARGO:\n{{ $('Combine Callback + CRM Row').item.json.Cargo }}\n\nVAGA:\n{{ $('Combine Callback + CRM Row').item.json['Observações'] }}\n\nPERFIL ORIGINAL DO CANDIDATO:\n{{ $('Sheets - Load Candidate Profile - Callback').first().json.valor }}\n\nCURRÍCULO OTIMIZADO:\n{{ $('Prepare CV Formatting').item.json.cv_text }}\n\nOBJETIVO:\n\nGere os materiais necessários para a candidatura e identifique como a candidatura deve ser realizada.\n\n1. EMAIL\n\nCrie uma mensagem curta de e-mail para acompanhar a candidatura.\n\nA mensagem deve:\n- ser profissional;\n- mencionar a vaga;\n- ser objetiva;\n- não afirmar que a candidatura já foi enviada;\n- não inventar informações.\n\n2. CARTA DE APRESENTAÇÃO\n\nCrie uma carta de apresentação personalizada para a vaga.\n\nA carta deve:\n- ser adequada para uso direto no corpo de um e-mail;\n- ter entre 3 e 5 parágrafos curtos;\n- mencionar a empresa e o cargo;\n- destacar somente experiências, projetos e competências existentes no perfil;\n- enfatizar os elementos com maior aderência à vaga;\n- não repetir integralmente o currículo;\n- não inventar experiência, resultados, tecnologias ou senioridade;\n- não afirmar que a candidatura já foi enviada;\n- terminar com uma despedida profissional.\n\n3. LINKEDIN\n\nCrie uma mensagem curta para abordagem via LinkedIn.\n\nA mensagem deve:\n- ser profissional;\n- ser direta;\n- mencionar interesse na vaga;\n- não inventar nome de recrutador;\n- não afirmar que já houve candidatura.\n\n4. RESUMO PROFISSIONAL\n\nCrie um resumo profissional curto, com foco nas competências mais relacionadas à vaga.\n\n5. CANAL DE CANDIDATURA\n\nAnalise a descrição completa da vaga e identifique como a candidatura deve ser realizada.\n\nClassifique application_channel usando SOMENTE um destes valores:\n\nSITE\nEMAIL\nSITE_E_EMAIL\nNAO_IDENTIFICADO\n\nRegras:\n\n- Use SITE quando existir link explícito para candidatura.\n- Use EMAIL quando houver um e-mail explícito para envio da candidatura.\n- Use SITE_E_EMAIL quando a vaga disponibilizar ambas as opções.\n- Use NAO_IDENTIFICADO quando não houver informação suficiente.\n\nExtraia application_email somente quando existir um endereço de e-mail explicitamente informado para candidatura.\n\nExtraia application_url somente quando existir uma URL explícita de candidatura.\n\nNão invente e-mail.\nNão invente URL.\nNão use o site institucional da empresa como application_url se ele não for apresentado como canal de candidatura.\n\nEm application_instructions, informe de forma curta e objetiva o que o candidato deve fazer.\n\nREGRAS GERAIS:\n\n- Use somente fatos existentes no perfil, currículo e descrição da vaga.\n- Nunca invente experiências.\n- Nunca invente empresas.\n- Nunca invente tecnologias.\n- Nunca invente certificações.\n- Nunca invente resultados.\n- Nunca invente dados de contato.\n- Não afirme que a candidatura foi enviada.\n- Responda somente com JSON válido.\n- Não use Markdown.\n- Não use blocos de código.\n\nFORMATO OBRIGATÓRIO:\n\n{\n  \"email\": \"...\",\n  \"cover_letter\": \"...\",\n  \"linkedin_message\": \"...\",\n  \"professional_summary\": \"...\",\n  \"application_channel\": \"SITE\",\n  \"application_email\": \"\",\n  \"application_url\": \"...\",\n  \"application_instructions\": \"...\"\n}",
+        "messages": {
+          "messageValues": [
+            {
+              "message": "Você é o Outreach Agent.\n\nSua função é criar materiais profissionais para candidatura usando exclusivamente informações factuais fornecidas no contexto.\n\nNunca invente experiências, empresas, tecnologias, certificações, resultados, contatos, recrutadores, URLs ou e-mails.\n\nResponda exclusivamente com JSON válido e sem Markdown."
+            }
+          ]
+        },
+        "batching": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1.9,
+      "position": [
+        3104,
+        1792
+      ],
+      "id": "c6e0e7fe-5356-4e1c-ada5-03cdeb980d44",
+      "name": "Basic LLM Chain - Outreach"
+    },
+    {
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "value": "gpt-4.1-mini",
+          "mode": "list",
+          "cachedResultName": "gpt-4.1-mini"
+        },
+        "builtInTools": {},
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.3,
+      "position": [
+        3120,
+        2064
+      ],
+      "id": "de330bf1-7383-4eb9-aad7-ffec6cf54de8",
+      "name": "OpenAI - Outreach",
+      "credentials": {
+        "openAiApi": {
+          "id": "uIBKmVBJHHDjfhah",
+          "name": "GPT - pago"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "let raw =\n  $json.text ??\n  $json.output ??\n  $json.response ??\n  $json;\n\nlet result;\n\nif (typeof raw === 'object' && raw !== null) {\n  result = raw;\n} else {\n  let text = String(raw || '').trim();\n\n  text = text\n    .replace(/^```json\\s*/i, '')\n    .replace(/^```\\s*/i, '')\n    .replace(/```\\s*$/i, '')\n    .trim();\n\n  const start = text.indexOf('{');\n  const end = text.lastIndexOf('}');\n\n  if (start === -1 || end === -1 || end < start) {\n    throw new Error(\n      'Resposta do Outreach não contém JSON completo: ' +\n      text.slice(0, 1500)\n    );\n  }\n\n  const jsonText = text.slice(start, end + 1);\n\n  try {\n    result = JSON.parse(jsonText);\n  } catch (error) {\n    throw new Error(\n      'JSON inválido retornado pelo Outreach: ' +\n      error.message +\n      ' | Conteúdo: ' +\n      jsonText.slice(0, 1500)\n    );\n  }\n}\n\nconst email = String(\n  result.email || ''\n).trim();\n\nconst coverLetter = String(\n  result.cover_letter || ''\n).trim();\n\nconst linkedinMessage = String(\n  result.linkedin_message || ''\n).trim();\n\nconst professionalSummary = String(\n  result.professional_summary || ''\n).trim();\n\nconst allowedChannels = [\n  'SITE',\n  'EMAIL',\n  'SITE_E_EMAIL',\n  'NAO_IDENTIFICADO'\n];\n\nlet applicationChannel = String(\n  result.application_channel || 'NAO_IDENTIFICADO'\n).trim();\n\nif (!allowedChannels.includes(applicationChannel)) {\n  applicationChannel = 'NAO_IDENTIFICADO';\n}\n\nconst applicationEmail = String(\n  result.application_email || ''\n).trim();\n\nconst applicationUrl = String(\n  result.application_url || ''\n).trim();\n\nconst applicationInstructions = String(\n  result.application_instructions || ''\n).trim();\n\nif (\n  !email &&\n  !coverLetter &&\n  !linkedinMessage &&\n  !professionalSummary\n) {\n  throw new Error(\n    'Outreach retornou JSON sem os campos esperados.'\n  );\n}\n\nreturn {\n  email,\n  cover_letter: coverLetter,\n  linkedin_message: linkedinMessage,\n  professional_summary: professionalSummary,\n  application_channel: applicationChannel,\n  application_email: applicationEmail,\n  application_url: applicationUrl,\n  application_instructions: applicationInstructions\n};"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3408,
+        1792
+      ],
+      "id": "69e395e0-6bb3-492e-9e67-2a01fc57469d",
+      "name": "Parse Outreach Result"
+    },
+    {
+      "parameters": {
+        "schemaType": "manual",
+        "inputSchema": "{\"type\": \"object\", \"properties\": {\"cv_text\": {\"type\": \"string\"}, \"highlights\": {\"type\": \"array\", \"items\": {\"type\": \"string\"}}}, \"required\": [\"cv_text\", \"highlights\"], \"additionalProperties\": false}"
+      },
+      "id": "32bb84df-6398-4dcb-9a03-cabfb6f0ad8a",
+      "name": "Parser - Career Coach",
+      "type": "@n8n/n8n-nodes-langchain.outputParserStructured",
+      "typeVersion": 1.2,
+      "position": [
+        2080,
+        2032
+      ]
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "1MTNBXky0f9Xw0fBzeXDNtbE-wVl-w5GgBb-3unRbcRA",
+          "mode": "list",
+          "cachedResultName": "Controle_Candidaturas_IA",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1MTNBXky0f9Xw0fBzeXDNtbE-wVl-w5GgBb-3unRbcRA/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": 621853849,
+          "mode": "list",
+          "cachedResultName": "Config",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1MTNBXky0f9Xw0fBzeXDNtbE-wVl-w5GgBb-3unRbcRA/edit#gid=621853849"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        -1680,
+        224
+      ],
+      "id": "3b069937-7241-461c-b06e-9019d6b2e56f",
+      "name": "Sheets - Load Candidate Profile  - Scout",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "RzI3ViCpF0C7DXwk",
+          "name": "Google Sheets"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "1MTNBXky0f9Xw0fBzeXDNtbE-wVl-w5GgBb-3unRbcRA",
+          "mode": "list",
+          "cachedResultName": "Controle_Candidaturas_IA",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1MTNBXky0f9Xw0fBzeXDNtbE-wVl-w5GgBb-3unRbcRA/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": 621853849,
+          "mode": "list",
+          "cachedResultName": "Config",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1MTNBXky0f9Xw0fBzeXDNtbE-wVl-w5GgBb-3unRbcRA/edit#gid=621853849"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        -1584,
+        944
+      ],
+      "id": "24ec610e-e453-449e-9813-2df177d6bb29",
+      "name": "Sheets - Load Candidate Profile - Callback",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "RzI3ViCpF0C7DXwk",
+          "name": "Google Sheets"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "83457374-3e91-4b5e-8131-9c09fa4ac972",
+              "leftValue": "={{ String($json['Currículo Gerado'] || '').trim() }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -624,
+        1392
+      ],
+      "id": "781c6f1f-8148-4038-bcd5-20167bbc252d",
+      "name": "IF Job Already Processed"
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('Combine Callback + CRM Row').item.json._chatId }}",
+        "text": "=✅ Esta vaga já foi processada.  Empresa: {{ $('Combine Callback + CRM Row').item.json.Empresa }} Cargo: {{ $('Combine Callback + CRM Row').item.json.Cargo }}  O currículo e os materiais desta candidatura já foram gerados.",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        -272,
+        1376
+      ],
+      "id": "b7bf4a80-4a07-4ad1-b49f-08840061eb19",
+      "name": "Telegram - Already Processed",
+      "webhookId": "ef3670b1-b482-49dd-90ec-92030b42b624",
+      "credentials": {
+        "telegramApi": {
+          "id": "CPXOvo77XBzjzjlS",
+          "name": "Radar Vagas"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "8f6f6f5a-2bd4-465f-9aec-d4edbb38646b",
+              "leftValue": "={{ $json['Status Processo'] }}",
+              "rightValue": "Aprovada - gerando materiais",
+              "operator": {
+                "type": "string",
+                "operation": "equals",
+                "name": "filter.operator.equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -272,
+        1744
+      ],
+      "id": "bf200be8-9db4-4c34-8afd-39ff3432384b",
+      "name": "IF Job Processing"
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('Combine Callback + CRM Row').item.json._chatId }}",
+        "text": "=⏳ Esta vaga já foi aprovada e os materiais estão sendo gerados.\n\nEmpresa: {{ $('Combine Callback + CRM Row').item.json.Empresa }}\nCargo: {{ $('Combine Callback + CRM Row').item.json.Cargo }}\n\nNão é necessário aprovar novamente.",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        64,
+        1728
+      ],
+      "id": "f441d616-6fea-4e08-8ddd-5f7766505a58",
+      "name": "Telegram - Already Processing",
+      "webhookId": "860ee565-219c-454e-aaae-817f2dc349a1",
+      "credentials": {
+        "telegramApi": {
+          "id": "CPXOvo77XBzjzjlS",
+          "name": "Radar Vagas"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "raw",
+        "jsonOutput": "{\n  \"parameters\": {\n    \"assignments\": {\n      \"assignments\": [\n        {\n          \"name\": \"ID\",\n          \"value\": \"={{ $('Combine Callback + CRM Row').item.json.ID }}\",\n          \"type\": \"string\"\n        },\n        {\n          \"name\": \"Status Processo\",\n          \"value\": \"Erro na geração de materiais\",\n          \"type\": \"string\"\n        },\n        {\n          \"name\": \"Status Telegram\",\n          \"value\": \"Erro no processamento\",\n          \"type\": \"string\"\n        },\n        {\n          \"name\": \"Observações\",\n          \"value\": \"={{ 'Falha na geração de materiais em ' + $now.toISO() }}\",\n          \"type\": \"string\"\n        }\n      ]\n    },\n    \"options\": {}\n  },\n  \"name\": \"CRM Update - Generation Error\",\n  \"type\": \"n8n-nodes-base.set\",\n  \"typeVersion\": 3.4\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.5,
+      "position": [
+        2448,
+        2176
+      ],
+      "id": "4a824c74-89af-4478-9482-982d7156cb9b",
+      "name": "CRM Update - Generation Error"
+    },
+    {
+      "parameters": {
+        "operation": "appendOrUpdate",
+        "documentId": {
+          "__rl": true,
+          "value": "1MTNBXky0f9Xw0fBzeXDNtbE-wVl-w5GgBb-3unRbcRA",
+          "mode": "list",
+          "cachedResultName": "Controle_Candidaturas_IA",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1MTNBXky0f9Xw0fBzeXDNtbE-wVl-w5GgBb-3unRbcRA/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "gid=0",
+          "mode": "list",
+          "cachedResultName": "Vagas",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1MTNBXky0f9Xw0fBzeXDNtbE-wVl-w5GgBb-3unRbcRA/edit#gid=0"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": {},
+          "matchingColumns": [
+            "ID"
+          ],
+          "schema": [
+            {
+              "id": "ID",
+              "displayName": "ID",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Data Encontrada",
+              "displayName": "Data Encontrada",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Empresa",
+              "displayName": "Empresa",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Cargo",
+              "displayName": "Cargo",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Local",
+              "displayName": "Local",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Tipo",
+              "displayName": "Tipo",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Link",
+              "displayName": "Link",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Score IA",
+              "displayName": "Score IA",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Motivos Match",
+              "displayName": "Motivos Match",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Lacunas",
+              "displayName": "Lacunas",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Status Telegram",
+              "displayName": "Status Telegram",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Data Aprovação",
+              "displayName": "Data Aprovação",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Currículo Gerado",
+              "displayName": "Currículo Gerado",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Mensagem Gerada",
+              "displayName": "Mensagem Gerada",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Data Envio",
+              "displayName": "Data Envio",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Status Processo",
+              "displayName": "Status Processo",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Observações",
+              "displayName": "Observações",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        2672,
+        2176
+      ],
+      "id": "2efe7c7f-16c2-40b0-8da4-633908a4e4ce",
+      "name": "Sheets - Generation Error",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "RzI3ViCpF0C7DXwk",
+          "name": "Google Sheets"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('Combine Callback + CRM Row').item.json._chatId }}",
+        "text": "=⚠️ Ocorreu um erro ao gerar os materiais desta vaga.\n\nEmpresa: {{ $('Combine Callback + CRM Row').item.json.Empresa }}\nCargo: {{ $('Combine Callback + CRM Row').item.json.Cargo }}\n\nO processo foi registrado como erro e pode ser reprocessado.",
+        "replyMarkup": "inlineKeyboard",
+        "inlineKeyboard": {
+          "rows": [
+            {
+              "row": {
+                "buttons": [
+                  {
+                    "text": "Reprocessar",
+                    "additionalFields": {
+                      "callback_data": "={{ 'retry:' + $('Combine Callback + CRM Row').item.json.ID }}"
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        2880,
+        2176
+      ],
+      "id": "fd807bb3-62b0-4a5f-9041-b499c40d76d8",
+      "name": "Telegram - Generation Error",
+      "webhookId": "5a1d0590-e6dd-400c-80e1-c8512005382d",
+      "credentials": {
+        "telegramApi": {
+          "id": "CPXOvo77XBzjzjlS",
+          "name": "Radar Vagas"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "bbbd9e2a-d571-43ef-a2ac-b701dde7d08c",
+              "leftValue": "={{ $json._action }}",
+              "rightValue": "retry",
+              "operator": {
+                "type": "string",
+                "operation": "equals",
+                "name": "filter.operator.equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -992,
+        944
+      ],
+      "id": "8a1efe1d-dc8f-4b70-bb75-5a71ae62e72b",
+      "name": "IF Retry Requested"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "b04d865f-bc9d-4366-bebb-65d19407e3e0",
+              "leftValue": "={{ $json['Status Processo'] }}",
+              "rightValue": "Erro na geração de materiais",
+              "operator": {
+                "type": "string",
+                "operation": "equals",
+                "name": "filter.operator.equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -704,
+        928
+      ],
+      "id": "af6c7c48-7526-41d4-80ad-d624bf999d3c",
+      "name": "IF Retry Allowed"
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('Combine Callback + CRM Row').item.json._chatId }}",
+        "text": "=ℹ️ Esta vaga não está disponível para reprocessamento.\n\nEmpresa: {{ $('Combine Callback + CRM Row').item.json.Empresa }}\nCargo: {{ $('Combine Callback + CRM Row').item.json.Cargo }}\nStatus atual: {{ $('Combine Callback + CRM Row').item.json['Status Processo'] }}\n\nO reprocessamento só é permitido quando o status estiver como \"Erro na geração de materiais\".",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        -416,
+        1088
+      ],
+      "id": "cc9c15d1-75ed-4960-a080-18507b414bd7",
+      "name": "Telegram - Retry Not Allowed",
+      "webhookId": "a09a6fab-8555-4c24-98ec-63c66aabe0ce",
+      "credentials": {
+        "telegramApi": {
+          "id": "CPXOvo77XBzjzjlS",
+          "name": "Radar Vagas"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "callback",
+        "queryId": "={{ $json.queryId }}",
+        "additionalFields": {
+          "show_alert": false,
+          "text": "Solicitação recebida. Processando..."
+        }
+      },
+      "id": "04a22b2b-a792-4445-abd3-0d288b04c824",
+      "name": "Telegram - Ack Callback",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        -1792,
+        944
+      ],
+      "webhookId": "562b52e0-7ab3-43a8-8190-783afbb454c0",
+      "credentials": {
+        "telegramApi": {
+          "id": "CPXOvo77XBzjzjlS",
+          "name": "Radar Vagas"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "81256314-f1f4-4413-bcfc-1d01656f87df",
+              "name": "career_prompt",
+              "type": "string",
+              "value": "=Você é um Career Coach especializado em otimização de currículos para vagas de tecnologia.\n\nSua função é transformar o perfil mestre do candidato em um CURRÍCULO PROFISSIONAL direcionado à vaga informada.\n\nPERFIL DO CANDIDATO:\n\n{{ $('Sheets - Load Candidate Profile - Callback').first().json.valor }}\n\nVAGA:\n\nEmpresa: {{ $('Combine Callback + CRM Row').item.json.Empresa }}\nCargo: {{ $('Combine Callback + CRM Row').item.json.Cargo }}\nLocal: {{ $('Combine Callback + CRM Row').item.json.Local }}\n\nDescrição:\n{{ $('Combine Callback + CRM Row').item.json['Observações'] }}\n\nOBJETIVO:\n\nCrie um currículo profissional que destaque as experiências, projetos e competências com maior aderência à vaga.\n\nNão gere uma matriz de competências.\nNão explique o match.\nNão crie uma seção chamada \"aderência\", \"capacidades relevantes\" ou similar.\n\nUse as informações do perfil mestre como fonte factual.\n\nREGRAS INVIOLÁVEIS:\n\n- Nunca invente empresa.\n- Nunca invente cargo.\n- Nunca invente período.\n- Nunca invente experiência.\n- Nunca invente projeto.\n- Nunca invente tecnologia.\n- Nunca invente certificação.\n- Nunca invente resultado ou métrica.\n- Nunca aumente nível de conhecimento declarado.\n- Nunca transforme requisito da vaga em experiência do candidato.\n- Preserve dados pessoais e histórico profissional exatamente como fornecidos.\n- Não crie seções vazias.\n\nPERSONALIZAÇÃO PARA A VAGA:\n\n- Adapte o título profissional para aproximá-lo da vaga sem atribuir cargo ou senioridade inexistente.\n- No resumo profissional, destaque experiências, projetos e tecnologias relacionadas à vaga.\n- Em cada experiência profissional, priorize os bullets mais aderentes à oportunidade.\n- Em projetos, priorize aqueles que demonstrem competências relacionadas à vaga.\n- Competências menos relevantes podem receber menor destaque, mas não devem ser transformadas ou exageradas.\n- Preserve empresas, cargos e períodos.\n\nESTRUTURA OBRIGATÓRIA:\n\n[NOME COMPLETO]\n[Título profissional direcionado à vaga]\n\n[Cidade/UF] | [E-mail] | [Telefone]\nLinkedIn: [URL]\nGitHub/Portfólio: [URL]\n\nRESUMO PROFISSIONAL\n\nEXPERIÊNCIA PROFISSIONAL\n\nPara cada experiência:\nCargo — Empresa\nPeríodo\n\n• atividade ou responsabilidade factual\n• atividade ou responsabilidade factual\n• atividade ou responsabilidade factual\n\nPROJETOS RELEVANTES\n\nInclua somente se houver projetos no perfil.\nPara cada projeto:\nNome do projeto\n\n• descrição factual\n• responsabilidades ou funcionalidades relevantes\n• tecnologias utilizadas\n\nFORMAÇÃO ACADÊMICA\n\nCOMPETÊNCIAS TÉCNICAS\n\nIDIOMAS\n\nREGRAS DE CONTEÚDO:\n\n- O resumo profissional deve ter entre 4 e 6 linhas.\n- Não use frases como \"buscando oportunidade\".\n- Não escreva como carta de apresentação.\n- Não use linguagem exagerada.\n- Evite repetir a mesma competência em várias seções.\n- Em experiência profissional, use de 3 a 6 bullets por cargo.\n- Em projetos, use de 2 a 5 bullets.\n- Priorize conteúdo aderente à vaga.\n- Não omita experiências profissionais reais apenas porque são menos aderentes.\n\nFORMATAÇÃO:\n\n- Não use Markdown.\n- Não use **.\n- Não use #.\n- Não use blocos de código.\n- Use títulos de seção em LETRAS MAIÚSCULAS.\n- Use • para bullets.\n- Use uma linha em branco entre as seções.\n- Gere texto limpo para inserção direta no Google Docs.\n- Escreva em português do Brasil."
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "f0107cfc-2ff7-4092-8843-8b054c244e73",
+      "name": "Career Coach Prompt",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1712,
+        1808
+      ]
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "1MTNBXky0f9Xw0fBzeXDNtbE-wVl-w5GgBb-3unRbcRA",
+          "mode": "list",
+          "cachedResultName": "Controle_Candidaturas_IA",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1MTNBXky0f9Xw0fBzeXDNtbE-wVl-w5GgBb-3unRbcRA/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "gid=0",
+          "mode": "list",
+          "cachedResultName": "Vagas",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1MTNBXky0f9Xw0fBzeXDNtbE-wVl-w5GgBb-3unRbcRA/edit#gid=0"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        -112,
+        224
+      ],
+      "id": "239ff7bd-c9a1-4473-8910-191ed84af945",
+      "name": "Sheets - Load Existing Jobs",
+      "executeOnce": true,
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "RzI3ViCpF0C7DXwk",
+          "name": "Google Sheets"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const existingRows = $input.all();\n\nconst existingIds = new Set(\n  existingRows\n    .map(item => String(item.json.ID || '').trim())\n    .filter(Boolean)\n);\n\nconst incomingJobs = $('Build Deterministic Job ID').all();\n\nconst newJobs = incomingJobs.filter(item => {\n  const id = String(item.json.id || '').trim();\n\n  return id && !existingIds.has(id);\n});\n\nreturn newJobs;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        80,
+        224
+      ],
+      "id": "0e1dd914-89ec-4f2a-92b4-4bd8dd3e54c7",
+      "name": "Filter New Jobs",
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "id": "e5776acd-5f6e-4142-a2c6-c42a23dcc576",
+      "name": "Scout - Google Alerts RSS",
+      "type": "n8n-nodes-base.rssFeedRead",
+      "typeVersion": 1.1,
+      "position": [
+        -1264,
+        224
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000,
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "text"
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        -1264,
+        16
+      ],
+      "id": "2ef82b35-cbd9-4a4a-8163-74c584c7ef09",
+      "name": "Scout - ProgramaThor"
+    },
+    {
+      "parameters": {
+        "jsCode": "const html = $input.first().json.data || '';\n\nif (!html) {\n  throw new Error('Scout - ProgramaThor não retornou HTML no campo data.');\n}\n\nfunction decodeHtml(text = '') {\n  return String(text)\n    .replace(/&amp;/g, '&')\n    .replace(/&quot;/g, '\"')\n    .replace(/&#39;/g, \"'\")\n    .replace(/&nbsp;/g, ' ')\n    .replace(/&lt;/g, '<')\n    .replace(/&gt;/g, '>')\n    .replace(/&ndash;/g, '–')\n    .replace(/&mdash;/g, '—')\n    .replace(/&rsquo;/g, '’')\n    .replace(/&#(\\d+);/g, (_, code) =>\n      String.fromCharCode(Number(code))\n    );\n}\n\nfunction cleanText(text = '') {\n  return decodeHtml(\n    String(text)\n      .replace(/<script[\\s\\S]*?<\\/script>/gi, '')\n      .replace(/<style[\\s\\S]*?<\\/style>/gi, '')\n      .replace(/<[^>]+>/g, ' ')\n  )\n    .replace(/\\s+/g, ' ')\n    .trim();\n}\n\nconst jobs = [];\n\n// Captura somente links de vagas individuais\nconst jobRegex =\n  /<a\\s+href=\"(\\/jobs\\/\\d+[^\"]*)\"[^>]*>([\\s\\S]*?)<\\/a>/gi;\n\nlet match;\n\nwhile ((match = jobRegex.exec(html)) !== null) {\n  const relativeLink = match[1];\n  const block = match[2];\n\n  // Cargo\n  const titleMatch = block.match(\n    /<h3[^>]*>([\\s\\S]*?)<\\/h3>/i\n  );\n\n  if (!titleMatch) {\n    continue;\n  }\n\n  const title = cleanText(titleMatch[1])\n    .replace(/\\bNOVA\\b/gi, '')\n    .trim();\n\n  // Metadados da vaga\n  const infoMatch = block.match(\n    /<div class=['\"]cell-list-content-icon['\"]>([\\s\\S]*?)<\\/div>/i\n  );\n\n  const infos = [];\n\n  if (infoMatch) {\n    const spanRegex = /<span[^>]*>([\\s\\S]*?)<\\/span>/gi;\n\n    let span;\n\n    while ((span = spanRegex.exec(infoMatch[1])) !== null) {\n      const value = cleanText(span[1]);\n\n      if (value) {\n        infos.push(value);\n      }\n    }\n  }\n\n  const company = infos[0] || '';\n  const location = infos[1] || '';\n\n  let companySize = '';\n  let salary = '';\n  let seniority = '';\n  let contract = '';\n\n  for (const value of infos.slice(2)) {\n    if (\n      /startup|grande empresa|pequena\\/média empresa/i.test(value)\n    ) {\n      companySize = value;\n      continue;\n    }\n\n    if (/R\\$|USD|salário|acima de|até/i.test(value)) {\n      salary = value;\n      continue;\n    }\n\n    if (/júnior|junior|pleno|sênior|senior|estágio|estagio/i.test(value)) {\n      seniority = value;\n      continue;\n    }\n\n    if (/\\bCLT\\b|\\bPJ\\b|estágio|estagio/i.test(value)) {\n      contract = value;\n    }\n  }\n\n  // Tecnologias / skills\n  const technologies = [];\n\n  const tagRegex =\n    /<span[^>]*class=['\"][^'\"]*tag-list[^'\"]*background-gray[^'\"]*['\"][^>]*>([\\s\\S]*?)<\\/span>/gi;\n\n  let tag;\n\n  while ((tag = tagRegex.exec(block)) !== null) {\n    const value = cleanText(tag[1]);\n\n    if (value && !technologies.includes(value)) {\n      technologies.push(value);\n    }\n  }\n\n  const external =\n    /VAGA EXTERNA/i.test(block);\n\n  const link =\n    `https://programathor.com.br${relativeLink}`;\n\n  const description = [\n    `Cargo: ${title}`,\n    company ? `Empresa: ${company}` : '',\n    location ? `Local: ${location}` : '',\n    seniority ? `Senioridade: ${seniority}` : '',\n    contract ? `Contrato: ${contract}` : '',\n    salary ? `Salário: ${salary}` : '',\n    technologies.length\n      ? `Tecnologias: ${technologies.join(', ')}`\n      : '',\n    external\n      ? 'Vaga externa com redirecionamento para candidatura.'\n      : ''\n  ]\n    .filter(Boolean)\n    .join('\\n');\n\n  jobs.push({\n    json: {\n      source: 'ProgramaThor',\n\n      title,\n      company,\n      location,\n\n      work_mode:\n        /remoto/i.test(location)\n          ? 'Remoto'\n          : location,\n\n      company_size: companySize,\n      seniority,\n      contract,\n      salary,\n\n      technologies,\n\n      link,\n\n      description,\n\n      external,\n\n      published_at: null\n    }\n  });\n}\n\nif (!jobs.length) {\n  throw new Error(\n    'Nenhuma vaga foi encontrada no HTML do ProgramaThor.'\n  );\n}\n\nreturn jobs;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1040,
+        16
+      ],
+      "id": "e38fbdf4-9942-4612-8d93-6c3703127749",
+      "name": "Normalize - ProgramaThor"
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all();\n\nfunction cleanText(value = '') {\n  return String(value)\n    .replace(/<script[\\s\\S]*?<\\/script>/gi, '')\n    .replace(/<style[\\s\\S]*?<\\/style>/gi, '')\n    .replace(/<[^>]+>/g, ' ')\n    .replace(/&nbsp;/g, ' ')\n    .replace(/&amp;/g, '&')\n    .replace(/&quot;/g, '\"')\n    .replace(/&#39;/g, \"'\")\n    .replace(/\\s+/g, ' ')\n    .trim();\n}\n\nconst output = [];\n\nfor (const item of items) {\n  const json = item.json || {};\n\n  // Ignora item vazio gerado pelo n8n\n  if (!Object.keys(json).length) {\n    continue;\n  }\n\n  const title =\n    cleanText(\n      json.title ??\n      json.name ??\n      json.headline ??\n      ''\n    );\n\n  let link =\n    json.link ??\n    json.url ??\n    json.guid ??\n    '';\n\n  // Alguns parsers de Atom podem devolver link como objeto\n  if (link && typeof link === 'object') {\n    link =\n      link.href ??\n      link.url ??\n      '';\n  }\n\n  // Ou como array\n  if (Array.isArray(link)) {\n    const firstValid = link.find(x => {\n      if (typeof x === 'string') return true;\n      return x?.href || x?.url;\n    });\n\n    if (typeof firstValid === 'string') {\n      link = firstValid;\n    } else if (firstValid) {\n      link =\n        firstValid.href ??\n        firstValid.url ??\n        '';\n    }\n  }\n\n  link = String(link || '').trim();\n\n  const rawContent =\n    json.content ??\n    json.contentSnippet ??\n    json.summary ??\n    json.description ??\n    json.snippet ??\n    '';\n\n  const description = cleanText(rawContent);\n\n  const publishedAt =\n    json.isoDate ??\n    json.pubDate ??\n    json.published ??\n    json.updated ??\n    null;\n\n  // Se não temos nem título nem link, não vale processar\n  if (!title && !link) {\n    continue;\n  }\n\n  output.push({\n    json: {\n      source: 'Google Alerts',\n      title,\n      company: '',\n      location: '',\n      work_mode: '',\n      company_size: '',\n      seniority: '',\n      contract: '',\n      salary: '',\n      technologies: [],\n      link,\n      description,\n      external: true,\n      published_at: publishedAt\n    }\n  });\n}\n\nreturn output;"
+      },
+      "id": "d440b05c-29a4-4390-b532-2d3c4f790372",
+      "name": "Normalize - Google Alerts",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1040,
+        224
+      ],
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all();\n\nconst output = [];\n\nfor (const item of items) {\n  const j = item.json || {};\n\n  const source = String(\n    j.source ??\n    j.fonte ??\n    'Desconhecida'\n  ).trim();\n\n  const title = String(\n    j.title ??\n    j.cargo ??\n    ''\n  ).trim();\n\n  const company = String(\n    j.company ??\n    j.empresa ??\n    ''\n  ).trim();\n\n  const location = String(\n    j.location ??\n    j.localizacao ??\n    ''\n  ).trim();\n\n  const workMode = String(\n    j.work_mode ??\n    j.tipo ??\n    ''\n  ).trim();\n\n  const link = String(\n    j.link ??\n    j.url ??\n    ''\n  ).trim();\n\n  const description = String(\n    j.description ??\n    j.descricao ??\n    ''\n  ).trim();\n\n  const technologies = Array.isArray(j.technologies)\n    ? j.technologies\n    : [];\n\n  const seniority = String(\n    j.seniority ?? ''\n  ).trim();\n\n  const contract = String(\n    j.contract ?? ''\n  ).trim();\n\n  const salary = String(\n    j.salary ?? ''\n  ).trim();\n\n  const companySize = String(\n    j.company_size ?? ''\n  ).trim();\n\n  const external = Boolean(\n    j.external ?? false\n  );\n\n  const publishedAt =\n    j.published_at ??\n    j.isoDate ??\n    j.pubDate ??\n    null;\n\n  // Não deixa passar registros que não parecem vagas\n  if (!title && !link) {\n    continue;\n  }\n\n  output.push({\n    json: {\n      source,\n      title,\n      company,\n      location,\n      work_mode: workMode,\n\n      seniority,\n      contract,\n      salary,\n      company_size: companySize,\n\n      technologies,\n\n      link,\n      description,\n\n      external,\n      published_at: publishedAt\n    }\n  });\n}\n\nreturn output;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -544,
+        224
+      ],
+      "id": "7a3cf4a0-8892-4421-8e06-c67588b15bdf",
+      "name": "Normalize - Unified Jobs"
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=Avalie a aderência entre o perfil do candidato e a vaga.\n\nPERFIL DO CANDIDATO:\n\n{{ $('Sheets - Load Candidate Profile  - Scout').first().json.valor }}\n\nVAGA:\n\nFonte: {{ $json.source }}\nEmpresa: {{ $json.company }}\nCargo: {{ $json.title }}\nLocal: {{ $json.location }}\nTipo: {{ $json.work_mode }}\n\nSenioridade informada:\n{{ $json.seniority || 'Não informada' }}\n\nTipo de contrato:\n{{ $json.contract || 'Não informado' }}\n\nFaixa salarial:\n{{ $json.salary || 'Não informada' }}\n\nTecnologias identificadas:\n{{ Array.isArray($json.technologies) && $json.technologies.length ? $json.technologies.join(', ') : 'Não informadas' }}\n\nDescrição:\n{{ $json.description }}\n\nOBJETIVO:\n\nAvalie a compatibilidade entre o perfil do candidato e a vaga.\n\nConsidere:\n- competências técnicas diretamente exigidas;\n- competências transferíveis;\n- experiência compatível com a função;\n- aderência entre área profissional e cargo;\n- formação relevante;\n- senioridade exigida;\n- lacunas importantes.\n\nREGRAS:\n\n- Nunca invente experiências.\n- Nunca invente competências.\n- Nunca invente certificações.\n- Nunca invente anos de experiência.\n- Considere somente informações presentes no perfil.\n- Reconheça aderência parcial.\n- Reconheça competências transferíveis.\n- Diferencie requisitos atendidos, parcialmente atendidos e não atendidos.\n- Quando houver conflito entre metadados estruturados da vaga e a descrição ou título original, priorize o título e a descrição textual da vaga.\n- Não penalize o candidato por campos estruturados vazios; use a descrição da vaga como fonte principal.\n- Quando a vaga exigir uma tecnologia ou domínio central para o exercício da função e o candidato não tiver evidência dessa competência no perfil, limite a pontuação de \"Competências técnicas obrigatórias\" proporcionalmente à lacuna.\n- Competências transferíveis não devem compensar integralmente a ausência de tecnologias ou conhecimentos centrais explicitamente exigidos pela vaga.\n- Para cargos especializados, a ausência de experiência no domínio principal deve reduzir de forma relevante a pontuação de compatibilidade com a função e de experiência/senioridade.\n- Para vagas em domínio especializado, competências fora do domínio principal devem ter peso secundário.\n- Experiência com automação, IA, integrações, backend ou outras áreas técnicas não deve elevar significativamente o score de uma vaga especializada quando não houver experiência comprovada no domínio principal.\n- Quando nenhuma das principais tecnologias obrigatórias da vaga estiver presente no perfil, a pontuação de \"Competências técnicas obrigatórias\" não deve ultrapassar 10 de 40 pontos.\n- Quando o candidato não possuir experiência comprovada no domínio principal da função, a pontuação de \"Experiência e senioridade\" não deve ultrapassar 7 de 20 pontos.\n- Formação acadêmica relevante pode contribuir para a pontuação, mas não deve compensar ausência de experiência prática exigida.\n- Não atribua nível de proficiência como básico, intermediário, avançado, sólido, sênior ou equivalente a uma competência, a menos que esse nível esteja explicitamente informado no perfil.\n- Não considere que o candidato domina uma tecnologia apenas por possuir experiência com tecnologia semelhante.\n- Não considere formação acadêmica como substituta de experiência prática quando a vaga exigir domínio profissional comprovado.\n- Não use inferências sobre senioridade que não estejam apoiadas no perfil.\n- Evite descrever competências correlatas como \"sólidas\", \"avançadas\" ou equivalentes quando esse nível não estiver explicitamente sustentado pelo perfil.\n- Nos motivos, priorize aderências diretamente úteis à vaga e somente depois mencione competências transferíveis secundárias.\n- Competências transferíveis devem ser apresentadas como complementares, nunca como equivalentes aos requisitos centrais ausentes.\n\nPONTUAÇÃO:\n\n1. Competências técnicas obrigatórias: até 40 pontos.\n   - Atende a maioria das tecnologias ou competências centrais: 30 a 40 pontos.\n   - Atende parcialmente: 15 a 29 pontos.\n   - Não possui as tecnologias ou competências centrais: 0 a 10 pontos.\n\n2. Compatibilidade entre área profissional e função: até 20 pontos.\n   - Mesmo domínio profissional: 15 a 20 pontos.\n   - Domínio relacionado: 8 a 14 pontos.\n   - Domínio diferente: 0 a 7 pontos.\n\n3. Experiência e senioridade: até 20 pontos.\n   - Experiência direta e senioridade compatível: 15 a 20 pontos.\n   - Experiência relacionada ou senioridade parcialmente compatível: 8 a 14 pontos.\n   - Sem experiência comprovada no domínio principal: 0 a 7 pontos.\n\n4. Formação acadêmica relevante: até 10 pontos.\n\n5. Competências desejáveis ou transferíveis: até 10 pontos.\n\nA pontuação deve refletir a aderência real à vaga específica, e não apenas a proximidade geral com a área de tecnologia.\n\nSe houver ausência de requisitos técnicos centrais da função, o score total não deve ultrapassar 60, salvo quando o perfil demonstrar experiência equivalente claramente transferível para o mesmo domínio.\n\nPara vagas especializadas, como mobile, DevOps, dados, segurança, IA, cloud, backend ou áreas equivalentes, avalie de forma mais rigorosa a experiência direta no domínio.\n\nO score deve ser inteiro entre 0 e 100.\n\nrecomendado = true somente quando score >= 70.\n\nRetorne no máximo 4 motivos e 4 lacunas.\n\nOs motivos devem representar aderências concretas entre o perfil e a vaga.\n\nAs lacunas devem representar requisitos relevantes ausentes ou parcialmente atendidos.\n\nEvite motivos genéricos.\n\nEvite repetir a mesma informação em motivos e lacunas.\n\nRetorne somente JSON válido neste formato:\n\n{\n  \"score\": 75,\n  \"motivos\": [\n    \"motivo 1\",\n    \"motivo 2\"\n  ],\n  \"lacunas\": [\n    \"lacuna 1\",\n    \"lacuna 2\"\n  ],\n  \"recomendado\": true\n}",
+        "messages": {
+          "messageValues": [
+            {
+              "message": "Você é o Recruiter Agent de um sistema de recrutamento assistido por IA.\n\nSua função é avaliar a aderência entre o perfil do candidato e a vaga.\n\nPriorize factualidade.\n\nNunca invente experiências, competências, certificações, senioridade ou anos de experiência.\n\nReconheça aderência parcial e competências transferíveis.\n\nRetorne somente JSON válido."
+            }
+          ]
+        },
+        "batching": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1.9,
+      "position": [
+        960,
+        320
+      ],
+      "id": "8fb8a8c8-132c-44aa-ba78-b7b3b7d8fcd9",
+      "name": "Recruiter Agent",
+      "retryOnFail": true,
+      "waitBetweenTries": 5000
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ $json.career_prompt }}",
+        "options": {
+          "systemMessage": "Você é o Career Coach Agent. Preserve factualidade absoluta e não fabrique credenciais, experiência ou senioridade.",
+          "maxIterations": 3
+        }
+      },
+      "id": "f4d60225-f1c0-4ad5-a68b-ec068b3f0d7c",
+      "name": "Agent 2 - Career Coach",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 1.7,
+      "position": [
+        1920,
+        1808
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000,
+      "onError": "continueErrorOutput"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Schedule Scout - 6h": {
+      "main": [
+        [
+          {
+            "node": "Sheets - Load Candidate Profile  - Scout",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Scout - RSS Remote Programming": {
+      "main": [
+        [
+          {
+            "node": "Normalize RSS Jobs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize RSS Jobs": {
+      "main": [
+        [
+          {
+            "node": "Merge Scout Sources",
+            "type": "main",
+            "index": 2
+          }
+        ]
+      ]
+    },
+    "Merge Scout Sources": {
+      "main": [
+        [
+          {
+            "node": "Normalize - Unified Jobs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Deterministic Job ID": {
+      "main": [
+        [
+          {
+            "node": "Sheets - Load Existing Jobs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Over Jobs": {
+      "main": [
+        [],
+        [
+          {
+            "node": "Rate Limit - 2s",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Rate Limit - 2s": {
+      "main": [
+        [
+          {
+            "node": "Recruiter Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Combine Recruiter Result": {
+      "main": [
+        [
+          {
+            "node": "IF Score >= 70",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF Score >= 70": {
+      "main": [
+        [
+          {
+            "node": "CRM Row - Aguardando Humano",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "CRM Row - Reprovada IA",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "CRM Row - Reprovada IA": {
+      "main": [
+        [
+          {
+            "node": "Sheets - Reprovada IA",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "CRM Row - Aguardando Humano": {
+      "main": [
+        [
+          {
+            "node": "Sheets - Pending Approval",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sheets - Pending Approval": {
+      "main": [
+        [
+          {
+            "node": "Telegram - Human Approval",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sheets - Reprovada IA": {
+      "main": [
+        [
+          {
+            "node": "Log - AI Rejection",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Telegram - Human Approval": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Jobs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Telegram Trigger - Callback": {
+      "main": [
+        [
+          {
+            "node": "Parse Telegram Callback",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Telegram Callback": {
+      "main": [
+        [
+          {
+            "node": "IF Authorized Telegram Chat",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF Authorized Telegram Chat": {
+      "main": [
+        [
+          {
+            "node": "Telegram - Ack Callback",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Telegram - Reject Unauthorized Callback",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sheets - Lookup Job by ID": {
+      "main": [
+        [
+          {
+            "node": "Combine Callback + CRM Row",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Combine Callback + CRM Row": {
+      "main": [
+        [
+          {
+            "node": "IF Retry Requested",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF Human Rejected": {
+      "main": [
+        [
+          {
+            "node": "CRM Update - Human Rejected",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "CRM Update - Approved",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "CRM Update - Human Rejected": {
+      "main": [
+        [
+          {
+            "node": "Sheets - Human Rejected",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sheets - Human Rejected": {
+      "main": [
+        [
+          {
+            "node": "Telegram - Confirm Rejection",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "CRM Update - Approved": {
+      "main": [
+        [
+          {
+            "node": "Sheets - Mark Approved",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sheets - Mark Approved": {
+      "main": [
+        [
+          {
+            "node": "Log - Human Approval",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Telegram - Confirm Approval": {
+      "main": [
+        [
+          {
+            "node": "Career Coach Prompt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Google Docs - Create CV": {
+      "main": [
+        [
+          {
+            "node": "Google Docs - Write CV",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Google Docs - Write CV": {
+      "main": [
+        [
+          {
+            "node": "Basic LLM Chain - Outreach",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "CRM Final Update": {
+      "main": [
+        [
+          {
+            "node": "Sheets - Final CRM",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sheets - Final CRM": {
+      "main": [
+        [
+          {
+            "node": "Telegram - Materials Ready",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log - AI Rejection": {
+      "main": [
+        [
+          {
+            "node": "Logs - AI Rejection",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Telegram - Confirm Rejection": {
+      "main": [
+        [
+          {
+            "node": "Log - Human Rejection",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log - Human Rejection": {
+      "main": [
+        [
+          {
+            "node": "Logs - Human Rejection",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Telegram - Materials Ready": {
+      "main": [
+        [
+          {
+            "node": "Log - Materials Ready",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log - Materials Ready": {
+      "main": [
+        [
+          {
+            "node": "Logs - Materials Ready",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Logs - AI Rejection": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Jobs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Limit": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Jobs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare CV Formatting": {
+      "main": [
+        [
+          {
+            "node": "Google Docs - Create CV",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log - Human Approval": {
+      "main": [
+        [
+          {
+            "node": "Logs - Human Approval",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Logs - Human Approval": {
+      "main": [
+        [
+          {
+            "node": "Telegram - Confirm Approval",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Basic LLM Chain - Outreach": {
+      "main": [
+        [
+          {
+            "node": "Parse Outreach Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI - Outreach": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Basic LLM Chain - Outreach",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Outreach Result": {
+      "main": [
+        [
+          {
+            "node": "CRM Final Update",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parser - Career Coach": {
+      "ai_outputParser": [
+        []
+      ]
+    },
+    "Sheets - Load Candidate Profile  - Scout": {
+      "main": [
+        [
+          {
+            "node": "Scout - RSS Remote Programming",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Scout - Google Alerts RSS",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Scout - ProgramaThor",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sheets - Load Candidate Profile - Callback": {
+      "main": [
+        [
+          {
+            "node": "Sheets - Lookup Job by ID",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF Job Already Processed": {
+      "main": [
+        [
+          {
+            "node": "Telegram - Already Processed",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "IF Job Processing",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF Job Processing": {
+      "main": [
+        [
+          {
+            "node": "Telegram - Already Processing",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "IF Human Rejected",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Telegram - Already Processing": {
+      "main": [
+        []
+      ]
+    },
+    "CRM Update - Generation Error": {
+      "main": [
+        [
+          {
+            "node": "Sheets - Generation Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sheets - Generation Error": {
+      "main": [
+        [
+          {
+            "node": "Telegram - Generation Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF Retry Requested": {
+      "main": [
+        [
+          {
+            "node": "IF Retry Allowed",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "IF Job Already Processed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF Retry Allowed": {
+      "main": [
+        [
+          {
+            "node": "Career Coach Prompt",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Telegram - Retry Not Allowed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Telegram - Ack Callback": {
+      "main": [
+        [
+          {
+            "node": "Sheets - Load Candidate Profile - Callback",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Career Coach Prompt": {
+      "main": [
+        [
+          {
+            "node": "Agent 2 - Career Coach",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sheets - Load Existing Jobs": {
+      "main": [
+        [
+          {
+            "node": "Filter New Jobs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Filter New Jobs": {
+      "main": [
+        [
+          {
+            "node": "Limit",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Scout - Google Alerts RSS": {
+      "main": [
+        [
+          {
+            "node": "Normalize - Google Alerts",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Scout - ProgramaThor": {
+      "main": [
+        [
+          {
+            "node": "Normalize - ProgramaThor",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize - ProgramaThor": {
+      "main": [
+        [
+          {
+            "node": "Merge Scout Sources",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize - Google Alerts": {
+      "main": [
+        [
+          {
+            "node": "Merge Scout Sources",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Normalize - Unified Jobs": {
+      "main": [
+        [
+          {
+            "node": "Build Deterministic Job ID",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Recruiter Agent": {
+      "main": [
+        [
+          {
+            "node": "Combine Recruiter Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Agent 2 - Career Coach": {
+      "main": [
+        [
+          {
+            "node": "Prepare CV Formatting",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "CRM Update - Generation Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "timeSavedMode": "fixed",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false
+  },
+  "versionId": "fc23c977-53f4-45f1-aa6b-15f766988107",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "6a9e38b4d9e7aa866ef8d749c2a324f4725166f99bad731bd8bd12f958266550"
+  },
+  "nodeGroups": [],
+  "id": "jmfhuCfpfwcJmbRg",
+  "tags": []
+}
